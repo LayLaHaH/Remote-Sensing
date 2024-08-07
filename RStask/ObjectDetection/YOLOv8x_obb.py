@@ -5,26 +5,35 @@ import numpy as np
 import torchvision
 import cv2
 from PIL import Image
+from ultralytics import YOLO
 class YoloDetection:
     def __init__(self, device):
         self.device = device
         try:
-            self.model = DetectMultiBackend('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt', device=torch.device('cpu'), dnn=False, fp16=False)
+            self.model = YOLO('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt')
         except:
-            self.model = DetectMultiBackend('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt', device=torch.device('cpu'), dnn=False,fp16=False)
-        self.category = ['small vehicle', 'large vehicle', 'plane', 'storage tank', 'ship', 'harbor',
-                         'ground track field',
-                         'soccer ball field', 'tennis court', 'swimming pool', 'baseball diamond', 'roundabout',
-                         'basketball court', 'bridge', 'helicopter']
+            self.model = YOLO('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt')
+        self.category = ['plane', 'ship', 'storage tank', 'baseball diamond', 'tennis court', 
+                         'basketball court', 'ground track field', 'harbor', 'bridge', 'large vehicle',
+                           'small vehicle', 'helicopter', 'roundabout', 'soccer ball field' , 'swimming pool']
 
     def inference(self, image_path, det_prompt,updated_image_path):
         image = torch.from_numpy(io.imread(image_path))
         image = image.permute(2, 0, 1).unsqueeze(0) / 255.0
         _, _, h, w = image.shape
         with torch.no_grad():
-            out, _ = self.model(image.to(self.device), augment=False,val=True)
-            predn = self.non_max_suppression(out, conf_thres=0.001, iou_thres=0.75, labels=[], multi_label=True,
-                                             agnostic=False)[0]
+            outs = self.model(image.to(self.device), augment=False,val=True)
+
+            # predn = self.non_max_suppression(outs[0].obb, conf_thres=0.001, iou_thres=0.75, labels=[], multi_label=True,
+            #                                  agnostic=False)[0]
+            obb=outs[0].obb
+            olist=obb.xyxy.cpu().numpy().tolist()  
+            for i in range(len(olist)):
+                olist[i].append(obb.conf[i].cpu().numpy().tolist())
+                olist[i].append(obb.cls[i].cpu().numpy().tolist())
+                #print(olist[i])
+            
+            predn=torch.tensor(olist)
             detections = predn.clone()
             detections = detections[predn[:, 4] > 0.75]
             detections_box = (detections[:, :4] / (640 / h)).int().cpu().numpy()
@@ -36,17 +45,22 @@ class YoloDetection:
                 det[y1:y2, x1:x2] = detection_classes[i] + 1
 
             self.visualize(image_path,updated_image_path,detections)
-            print(
-                f"\nProcessed Object Detection, Input Image: {image_path}, Output Bounding box: {updated_image_path},Output text: {'Object Detection Done'}")
+            # print(
+            #     f"\nProcessed Object Detection, Input Image: {image_path}, Output Bounding box: {updated_image_path},Output text: {'Object Detection Done'}")
             return  det_prompt+' object detection result in '+updated_image_path
     def visualize(self,image_path, newpic_path,detections):
         font = cv2.FONT_HERSHEY_SIMPLEX
         im = io.imread(image_path)
         boxes = detections.int().cpu().numpy()
+        # print("//////////")
+        # print(len(boxes))
+        # print("//////////")
         for i in range(len(boxes)):
+
             cv2.rectangle(im, (boxes[i][0], boxes[i][1]), (boxes[i][2], boxes[i][3]), (0, 255, 255), 2)
             cv2.rectangle(im, (boxes[i][0], boxes[i][1] - 15), (boxes[i][0] + 45, boxes[i][1] - 2), (0, 0, 255),thickness=-1)
             cv2.putText(im, self.category[boxes[i][-1]], (boxes[i][0], boxes[i][1] - 2), font, 0.5, (255, 255, 255),1)
+            
         Image.fromarray(im.astype(np.uint8)).save(newpic_path)
         with open(newpic_path[:-4]+'.txt','w') as f:
             for i in range(len(boxes)):

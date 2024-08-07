@@ -1,3 +1,3 @@
 from RStask import LanduseFunction
-model=LanduseFunction('cuda:0')
-model.inference('/data/haonan.guo/LoveDA/Train/Urban/images_png/1367.png','road','/data/haonan.guo/RSChatGPT/output.png')
+model=LanduseFunction('cpu')
+model.inference('./image/airport_1_jpg.rf.3c38a93e805e111768dd2e37658c7c75.jpg','road','outputLUS.png')

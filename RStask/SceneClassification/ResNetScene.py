@@ -39,5 +39,5 @@ class ResNetAID:
                          indices[0][0]] + ' and ' + str(
             torch.round(values[0][1] * 10000).item() / 100) + '% probability being ' + list(self.all_dict.keys())[
                          indices[0][1]]+'.'
-        print(f"\nProcessed Scene Classification, Input Image: {inputs}, Output Scene: {output_txt}")
+        # print(f"\nProcessed Scene Classification, Input Image: {inputs}, Output Scene: {output_txt}")
         return output_txt

@@ -38,6 +38,3 @@ class SwinInstance:
         else:
             print(f"\nCategory: { det_prompt} is not supported. Please use other tools.")
             return f"Category {det_prompt} is not supported. Please use other tools."
-
-
-

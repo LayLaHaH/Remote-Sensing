@@ -16,8 +16,9 @@ from langchain_core.prompts import ChatPromptTemplate
 import numpy as np
 from Prefix import  RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX
 from RStask import ImageEdgeFunction,CaptionFunction,LanduseFunction,DetectionFunction,CountingFuncnction,SceneFunction,InstanceFunction
-
-
+import base64  
+from io import BytesIO  
+from PIL import Image
 
 os.makedirs('image', exist_ok=True)
 def prompts(name, description):
@@ -35,6 +36,41 @@ def get_new_image_name(org_img_name, func_name="update"):
     recent_prev_file_name = name_split[0]
     new_file_name = f'{this_new_uuid}_{func_name}_{recent_prev_file_name}.png'.replace('__','_')
     return os.path.join(head, new_file_name)
+
+
+# Function to convert image to Base64  
+def convert_image_to_base64(image_path):  
+    # Load the image  
+    image = io.imread(image_path)  
+
+    # Convert the image array to a byte array  
+    pil_image = Image.fromarray(image)  
+    buffered = BytesIO()  
+    pil_image.save(buffered, format="JPEG")  # or PNG, depending on your image type  
+
+    # Encode the byte array to Base64  
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')  
+
+class Conversation:
+    def __init__(self, device):
+        print(f"Initializing Conversation to {device}")
+        self.device = device
+        self.ollama = Ollama(base_url='http://172.25.1.139:11434', model="llava:latest")  # Initialize the Ollama Llava model
+
+    @prompts(name="Image Conversation",
+             description="Engage in a conversation about the image directly."
+             " You can ask questions like 'What are the object categories in the image?'"
+             " or 'Where are the buildings located?'. The input to this tool should be a string,"
+             " representing the image_path.")
+    def inference(self, image_path, question):
+        # Convert the image to Base64
+        image_b64 = convert_image_to_base64(image_path)
+
+        # Bind the Base64 image data and invoke the model
+        ollama_with_image = self.ollama.bind(images=[image_b64])  # Wrap in a list for multiple images
+        response = ollama_with_image.invoke(question)
+
+        return response
 
 class EdgeDetection:
     def __init__(self, device):
@@ -100,12 +136,12 @@ class LandUseSegmentation:
         print("Initializing LandUseSegmentation")
         self.func=LanduseFunction(device)
 
-    @prompts(name="Land Use Segmentation for Remote Sensing Image",
-             description="useful when you want to apply land use gegmentation for the image. The expected input category include Building, Road, Water, Barren, Forest, Farmland, Landuse."
+    @prompts(name="Segmentation for Remote Sensing Image",
+             description="useful when you want to apply segmentation for the image"
                          "like: generate landuse map from this image, "
                          "or predict the landuse on this image, or extract building from this image, segment roads from this image, Extract the water bodies in the image. "
                          "The input to this tool should be a comma separated string of two, "
-                         "representing the image_path, the text of the category,selected from Lnad Use, or Building, or Road, or Water, or Barren, or Forest, or Farmland, or Landuse.")
+                         "representing the image_path, the text of the category selected to be segmented")
     def inference(self, inputs):
         image_path, det_prompt = inputs.split(",")
         updated_image_path = get_new_image_name(image_path, func_name="landuse")
@@ -142,99 +178,120 @@ class ImageCaptioning:
         print(f"\nProcessed ImageCaptioning, Input Image: {image_path}, Output Text: {captions}")
         return captions
 
-class RSChatGPT:
-    def __init__(self, gpt_name,load_dict,openai_key,proxy_url):
-        print(f"Initializing RSChatGPT, load_dict={load_dict}")
-        if 'ImageCaptioning' not in load_dict:
-            raise ValueError("You have to load ImageCaptioning as a basic function for RSChatGPT")
-        self.models = {}
-        # Load Basic Foundation Models
-        for class_name, device in load_dict.items():
-            self.models[class_name] = globals()[class_name](device=device)
-        # Load Template Foundation Models
-        for class_name, module in globals().items():
-            if getattr(module, 'template_model', False):
-                template_required_names = {k for k in inspect.signature(module.__init__).parameters.keys() if
-                                           k != 'self'}
-                loaded_names = set([type(e).__name__ for e in self.models.values()])
+class RSChatGPT:  
+    def __init__(self, gpt_name, load_dict, openai_key, proxy_url):  
+        print(f"Initializing RSChatGPT, load_dict={load_dict}")  
+        if 'ImageCaptioning' not in load_dict:  
+            raise ValueError("You have to load ImageCaptioning as a basic function for RSChatGPT")  
+        self.models = {}  
+        self.last_tool_name = None  # Track the last tool used  
+
+        # Load Basic Foundation Models  
+        for class_name, device in load_dict.items():  
+            self.models[class_name] = globals()[class_name](device=device)  
+        
+        # Load Template Foundation Models  
+        for class_name, module in globals().items():  
+            if getattr(module, 'template_model', False):  
+                template_required_names = {k for k in inspect.signature(module.__init__).parameters.keys() if k != 'self'}  
+                loaded_names = set([type(e).__name__ for e in self.models.values()])  
                 if template_required_names.issubset(loaded_names):
                     self.models[class_name] = globals()[class_name](
                         **{name: self.models[name] for name in template_required_names})
+                    
+        print(f"All the Available Functions: {self.models}")  
 
-        print(f"All the Available Functions: {self.models}")
+        self.tools = []  
+        for instance in self.models.values():  
+            for e in dir(instance):  
+                if e.startswith('inference'):  
+                    func = getattr(instance, e)  
+                    self.tools.append(Tool(name=func.name, description=func.description, func=func))  
 
-        self.tools = []
-        for instance in self.models.values():
-            for e in dir(instance):
-                if e.startswith('inference'):
-                    func = getattr(instance, e)
-                    self.tools.append(Tool(name=func.name, description=func.description, func=func))
-        print("====================================================================================")
-        print("tools=",self.tools)
-        print("-------------------------------------------------------------------------------------")
-        #self.llm = ChatOpenAI(api_key=openai_key, base_url=proxy_url, model_name=gpt_name,temperature=0)
-        # self.llm = ChatOllama(model="llava:latest", temperature=0, base_url="http://localhost:11434")
-        self.llm = ChatOllama(model="llama3:latest", temperature=0, base_url="http://172.25.1.139:11434")
-        #self.llm = ChatOllama(model="llama3")
-        #self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')# return_messages=True
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)# return_messages=True
+        # Add the new Conversation tool  
+        self.models['Conversation'] = Conversation(device='cpu')  # Ensure the Conversation class is instantiated  
+        self.tools.append(Tool(name="Image Conversation", description="Engage in a conversation about the image directly.", func=self.models['Conversation'].inference))  
 
-    def initialize(self):
-        self.memory.clear() #clear previous history
-        PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX
-        self.agent = initialize_agent(
-            self.tools,
-            self.llm,
-            agent="conversational-react-description",
-            verbose=True,
-            memory=self.memory,
-            return_intermediate_steps=True,stop=["\nObservation:", "\n\tObservation:"],
-            agent_kwargs={'prefix': PREFIX, 'format_instructions': FORMAT_INSTRUCTIONS,'suffix': SUFFIX}, )
-        print("======================================")
-        print("======================================")
-        print("===================Hellllo====================")
-        print("======================================")
+        print("====================================================================================")  
+        print("tools=", self.tools)  
+        print("-------------------------------------------------------------------------------------")  
+        self.llm = ChatOllama(model="llava:latest", temperature=0, base_url="http://172.25.1.139:11434")  
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)  
+
+    def initialize(self):  
+        self.memory.clear()  # clear previous history  
+        PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX  
+        self.agent = initialize_agent(  
+            self.tools,  
+            self.llm,  
+            agent="conversational-react-description",  
+            verbose=True,  
+            memory=self.memory,  
+            return_intermediate_steps=True,  
+            stop=["\nObservation:", "\n\tObservation:","Observation:"],  
+            agent_kwargs={'prefix': PREFIX, 'format_instructions': FORMAT_INSTRUCTIONS, 'suffix': SUFFIX},  
+        )  
+        print("======================================")  
+        print("======================================")  
+        print("==============Hellllo=================")  
+        print("======================================")  
         print("======================================")            
-           
 
-    def run_text(self, text, state):
-        print("run_text=",text)
-        res = self.agent({"input": text.strip()})
-        print("res=",res)
-        res['output'] = res['output'].replace("\\", "/")
-        response = re.sub('(image/[-\w]*.png)', lambda m: f'![](file={m.group(0)})*{m.group(0)}*', res['output'])
-        state = state + [(text, response)]
-        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
-        return state
-    def run_image(self, image_dir, state, txt=None):
-        image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
-        print("image_filename=",image_filename)
-        img = io.imread(image_dir)
-        io.imsave(image_filename, img.astype(np.uint8))
-        description = self.models['ImageCaptioning'].inference(image_filename)
-        print("======================================")
-        print("======================================")
-        print("description=",description)
-        print("======================================")
-        print("======================================")
-        Human_prompt = f' Provide a remote sensing image named {image_filename}. The description is: {description}. This information helps you to understand this image, but you should use tools to finish following tasks, rather than directly imagine from my description. If you understand, say \"Received\".'
-        AI_prompt = "Received."
-        self.memory.chat_memory.add_user_message(Human_prompt)
-        self.memory.chat_memory.add_ai_message(AI_prompt)
+    def stop_if_tool_used_twice(self, tool_name):  
+        if tool_name == self.last_tool_name:  
+            print("Stopping: Tool used twice in a row.")  
+            return True  # Indicates we should stop the agent  
+        self.last_tool_name = tool_name  
+        return False  # Indicates we can continue  
 
-        state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]
-        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
-        state=self.run_text(f'{txt} {image_filename} ', state)
-        print("======================================")
-        print("======================================")
-        print("======================state=================",state)
-        print("======================================")
-        print("======================================")
-        return state
+    def run_text(self, text, state):  
+        print("run_text=", text)  
+        res = self.agent({"input": text.strip()})  
 
+        tool_name = res.get('tool_name', None)  # Assuming the response contains the tool name  
+        if self.stop_if_tool_used_twice(tool_name):  
+            return state  # Early return to prevent further processing  
 
+        print("_________QQQQQQQQ_______1___________QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        res['output'] = res['output'].replace("\\", "/")  
+        print("_________QQQQQQQQ_______2___________QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        response = re.sub('(image/[-\w]*.png)', lambda m: f'![](file={m.group(0)})*{m.group(0)}*', res['output'])  
+        print("_________QQQQQQQQ_______3___________QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        state = state + [(text, response)]  
+        print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"  
+              f"Current Memory: {self.agent.memory.buffer}")  
+        print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        print("QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ")  
+        return state  
+    
+    def run_image(self, image_dir, state, txt=None):  
+        image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")  
+        print("image_filename=", image_filename)  
+        img = io.imread(image_dir)  
+        io.imsave(image_filename, img.astype(np.uint8))  
+        description = self.models['ImageCaptioning'].inference(image_filename)  
+        print("======================================")  
+        print("======================================")  
+        print("description=", description)  
+        print("======================================")  
+        print("======================================")  
+        Human_prompt = f' Provide a remote sensing image named {image_filename}. The description is: {description}. This information helps you to understand this image, but you should use tools to finish following tasks, rather than directly imagine from my description and if you used the same action twice in a row then stop. If you understand, say "Received".'  
+        AI_prompt = "Received."  
+        self.memory.chat_memory.add_user_message(Human_prompt)  
+        self.memory.chat_memory.add_ai_message(AI_prompt)  
+
+        state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]  
+        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"  
+              f"Current Memory: {self.agent.memory.buffer}")  
+        state = self.run_text(f'{txt} {image_filename} ', state)  
+        print("======================================")  
+        print("======================================")  
+        print("======================state=================", state)  
+        print("======================================")  
+        print("======================================")  
+        return state  
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -242,8 +299,8 @@ if __name__ == '__main__':
     parser.add_argument('--image_dir', type=str,required=True)
     parser.add_argument('--gpt_name', type=str, default="gpt-3.5-turbo",choices=['gpt-3.5-turbo-1106','gpt-3.5-turbo','gpt-4','gpt-4-0125-preview','gpt-4-turbo-preview','gpt-4-1106-preview'])
     parser.add_argument('--proxy_url', type=str, default=None)
-    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,InstanceSegmentation,ObjectCounting,SceneClassification,EdgeDetection]',
-                        default="ImageCaptioning_cpu,SceneClassification_cpu,ObjectDetection_cpu,LandUseSegmentation_cpu,InstanceSegmentation_cpu,ObjectCounting_cpu,EdgeDetection_cpu")
+    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,ObjectCounting,SceneClassification,EdgeDetection,Conversation]',
+                        default="ImageCaptioning_cpu,SceneClassification_cpu,ObjectDetection_cpu,LandUseSegmentation_cpu,ObjectCounting_cpu,EdgeDetection_cpu,Conversation_cpu ")
     args = parser.parse_args()
     state = []
     load_dict = {e.split('_')[0].strip(): e.split('_')[1].strip() for e in args.load.split(',')}
@@ -251,7 +308,7 @@ if __name__ == '__main__':
     bot.initialize()
     print('RSChatGPT initialization done, you can now chat with RSChatGPT~')
     bot.initialize()
-    txt='Count the number of plane in the image.'
+    txt='detect the planes in the image'
     state=bot.run_image(args.image_dir, [], txt)
 
     while 1:

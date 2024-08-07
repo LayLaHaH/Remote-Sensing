@@ -4,18 +4,18 @@ from skimage import io
 import numpy as np
 import torchvision
 import torch.nn.functional as F
+from ultralytics import YOLO
+
 class YoloCounting:
     def __init__(self, device):
-        from RStask.ObjectDetection.models.common import DetectMultiBackend
         self.device = device
         try:
-            self.model = DetectMultiBackend('./checkpoints/yolov5_best.pt', device=torch.device(device), dnn=False, fp16=False)
+            self.model = YOLO('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt')
         except:
-            self.model = DetectMultiBackend('../../checkpoints/yolov5_best.pt', device=torch.device(device), dnn=False,fp16=False)
-        self.category = ['small vehicle', 'large vehicle', 'plane', 'storage tank', 'ship', 'harbor',
-                         'ground track field',
-                         'soccer ball field', 'tennis court', 'swimming pool', 'baseball diamond', 'roundabout',
-                         'basketball court', 'bridge', 'helicopter']
+            self.model = YOLO('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt')
+        self.category = ['plane', 'ship', 'storage tank', 'baseball diamond', 'tennis court', 
+                         'basketball court', 'ground track field', 'harbor', 'bridge', 'large vehicle',
+                           'small vehicle', 'helicopter', 'roundabout', 'soccer ball field' , 'swimming pool']
 
 
     def inference(self, image_path, det_prompt):
@@ -32,9 +32,17 @@ class YoloCounting:
         image = image.permute(2, 0, 1).unsqueeze(0) / 255.0
         _, _, h, w = image.shape
         with torch.no_grad():
-            out, _ = self.model(image.to(self.device), augment=False,val=True)
-            predn = self.non_max_suppression(out, conf_thres=0.001, iou_thres=0.75, labels=[], multi_label=True,
-                                             agnostic=False)[0]
+            out = self.model(image.to(self.device), augment=False,val=True)
+            # predn = self.non_max_suppression(out, conf_thres=0.001, iou_thres=0.75, labels=[], multi_label=True,
+            #                                  agnostic=False)[0]
+            obb=out[0].obb
+            olist=obb.xyxy.cpu().numpy().tolist()  
+            for i in range(len(olist)):
+                olist[i].append(obb.conf[i].cpu().numpy().tolist())
+                olist[i].append(obb.cls[i].cpu().numpy().tolist())
+                #print(olist[i])
+            
+            predn=torch.tensor(olist)
             detections = predn.clone()
             detections = detections[predn[:, 4] > 0.75]
             detections_box = (detections[:, :4] / (640 / h)).int().cpu().numpy()
@@ -51,7 +59,7 @@ class YoloCounting:
         else:
             log_text = 'No ' + self.category[i] + ' detected.'
 
-        print(f"\nProcessed Object Counting, Input Image: {image_path}, Output text: {log_text}")
+        # print(f"\nProcessed Object Counting, Input Image: {image_path}, Output text: {log_text}")
         return log_text
 
     def non_max_suppression(self, prediction,
