@@ -16,9 +16,7 @@ from langchain_core.prompts import ChatPromptTemplate
 import numpy as np
 from Prefix import  RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX
 from RStask import ImageEdgeFunction,CaptionFunction,LanduseFunction,DetectionFunction,CountingFuncnction,SceneFunction,InstanceFunction
-import base64  
-from io import BytesIO  
-from PIL import Image
+
 
 
 os.makedirs('image', exist_ok=True)
@@ -82,6 +80,22 @@ class SceneClassification:
         return output_txt
 
 
+class InstanceSegmentation:
+    def __init__(self, device):
+        print("Initializing InstanceSegmentation")
+        self.func=InstanceFunction(device)
+    @prompts(name="Instance Segmentation for Remote Sensing Image",
+             description="useful when you want to apply man-made instance segmentation for the image. The expected input category include plane, ship, storage tank, baseball diamond, tennis court, basketball court, ground track field, harbor, bridge, vehicle, helicopter, roundabout, soccer ball field, and swimming pool."
+                         "like: extract plane from this image, "
+                         "or predict the ship in this image, or extract tennis court from this image, segment harbor from this image, Extract the vehicle in the image. "
+                         "The input to this tool should be a comma separated string of two, "
+                         "representing the image_path, the text of the category,selected from plane, or ship, or storage tank, or baseball diamond, or tennis court, or basketball court, or ground track field, or harbor, or bridge, or vehicle, or helicopter, or roundabout, or soccer ball field, or  swimming pool. ")
+    def inference(self, inputs):
+        image_path, det_prompt = inputs.split(",")
+        updated_image_path = get_new_image_name(image_path, func_name="instance_" + det_prompt)
+        text=self.func.inference(image_path, det_prompt,updated_image_path)
+        return text
+
 class LandUseSegmentation:
     def __init__(self, device):
         print("Initializing LandUseSegmentation")
@@ -122,50 +136,12 @@ class ImageCaptioning:
         self.device = device
         self.func=CaptionFunction(device)
     @prompts(name="Get Photo Description",
-             description="useful when you want to know what is the caption of the photo. receives image_path as input. "
+             description="useful when you want to know what is inside the photo. receives image_path as input. "
                          "The input to this tool should be a string, representing the image_path. ")
     def inference(self, image_path):
         captions = self.func.inference(image_path)
         print(f"\nProcessed ImageCaptioning, Input Image: {image_path}, Output Text: {captions}")
         return captions
-
-# Function to convert image to Base64  
-def convert_image_to_base64(image_path):  
-    # Load the image  
-    image = io.imread(image_path)  
-
-    # Convert the image array to a byte array  
-    pil_image = Image.fromarray(image)  
-    buffered = BytesIO()  
-    pil_image.save(buffered, format="JPEG")  # or PNG, depending on your image type  
-
-    # Encode the byte array to Base64  
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')  
-
-class Conversation:
-    def __init__(self, device):
-        print(f"Initializing Conversation to {device}")
-        self.device = device
-        self.ollama = Ollama(base_url='http://172.25.1.139:11434', model="llava:latest")  # Initialize the Ollama Llava model
-
-    @prompts(name="Image Conversation",
-             description="useful when you want to engage in  in a conversation with the image."
-             " You can ask questions related to the content of the image "
-             "like: What are the object categories in the image?"
-             " or Where are the buildings located?, or give me the tags of the objects in the image"
-             "The input to this tool should be a comma separated string of two, "
-             "representing the image_path, the question asked")
-
-    def inference(self,inputs):
-        image_path, question = inputs.split(",")
-        # Convert the image to Base64
-        image_b64 = convert_image_to_base64(image_path)
-
-        # Bind the Base64 image data and invoke the model
-        ollama_with_image = self.ollama.bind(images=[image_b64])  # Wrap in a list for multiple images
-        response = ollama_with_image.invoke(question)
-
-        return response
 
 class RSChatGPT:
     def __init__(self, gpt_name,load_dict,openai_key,proxy_url):
@@ -194,10 +170,6 @@ class RSChatGPT:
                 if e.startswith('inference'):
                     func = getattr(instance, e)
                     self.tools.append(Tool(name=func.name, description=func.description, func=func))
-        self.models['Conversation'] = Conversation(device='cpu')  # Instantiate the Conversation class
-        self.tools.append(Tool(name=self.models['Conversation'].inference.name, 
-                                description=self.models['Conversation'].inference.description, 
-                                func=self.models['Conversation'].inference))
         print("====================================================================================")
         print("tools=",self.tools)
         print("-------------------------------------------------------------------------------------")
@@ -271,8 +243,8 @@ if __name__ == '__main__':
     parser.add_argument('--image_dir', type=str,required=True)
     parser.add_argument('--gpt_name', type=str, default="gpt-3.5-turbo",choices=['gpt-3.5-turbo-1106','gpt-3.5-turbo','gpt-4','gpt-4-0125-preview','gpt-4-turbo-preview','gpt-4-1106-preview'])
     parser.add_argument('--proxy_url', type=str, default=None)
-    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,ObjectCounting,SceneClassification,EdgeDetection,Conversation]',
-                        default="ImageCaptioning_cpu,SceneClassification_cpu,ObjectDetection_cpu,LandUseSegmentation_cpu,ObjectCounting_cpu,EdgeDetection_cpu,Conversation_cpu")
+    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,InstanceSegmentation,ObjectCounting,SceneClassification,EdgeDetection]',
+                        default="ImageCaptioning_cpu,SceneClassification_cpu,ObjectDetection_cpu,LandUseSegmentation_cpu,InstanceSegmentation_cpu,ObjectCounting_cpu,EdgeDetection_cpu")
     args = parser.parse_args()
     state = []
     load_dict = {e.split('_')[0].strip(): e.split('_')[1].strip() for e in args.load.split(',')}
@@ -280,7 +252,7 @@ if __name__ == '__main__':
     bot.initialize()
     print('RSChatGPT initialization done, you can now chat with RSChatGPT~')
     bot.initialize()
-    txt='give me the tags of the objects in the image '
+    txt='Count the number of plane in the image.'
     state=bot.run_image(args.image_dir, [], txt)
 
     while 1:
