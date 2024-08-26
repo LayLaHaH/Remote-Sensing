@@ -25,7 +25,7 @@ class SAMLandUseSegmentation:
 
         except Exception as e:  
             print(f"Segmentation failed: {str(e)}. Please check if the text prompt is supported.")
-        return text_prompt+' segmentation result in '+updated_image_path
+        return text_prompt+' segmentation result in '+updated_image_path,updated_image_path
 
 
 if __name__ == '__main__':

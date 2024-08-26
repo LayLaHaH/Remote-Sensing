@@ -5,14 +5,19 @@ import uuid
 from skimage import io
 import argparse
 import inspect
-from langchain.chat_models import ChatOpenAI
+from langchain_community.llms import Ollama
+from langchain_community.chat_models import ChatOllama
 from langchain.agents.initialize import initialize_agent
 from langchain.agents.tools import Tool
 from langchain.chains.conversation.memory import ConversationBufferMemory
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
 import numpy as np
-from Prefix import  RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX
-from RStask import ImageEdgeFunction,CaptionFunction,LanduseFunction,DetectionFunction,CountingFuncnction,SceneFunction,InstanceFunction
-
+from Prefix import  RS_CHAT_PREFIX, RS_CHAT_FORMAT_INSTRUCTIONS, RS_CHAT_SUFFIX
+from RStask import ImageEdgeFunction,CaptionFunction,LanduseFunction,DetectionFunction,CountingFuncnction,SceneFunction
+import base64  
+from io import BytesIO  
+from PIL import Image
 
 
 os.makedirs('image', exist_ok=True)
@@ -44,7 +49,7 @@ class EdgeDetection:
     def inference(self, inputs):
         updated_image_path=get_new_image_name(inputs, func_name="edge")
         self.func.inference(inputs,updated_image_path)
-        return updated_image_path
+        return "",updated_image_path
 
 class ObjectCounting:
     def __init__(self, device):
@@ -56,25 +61,12 @@ class ObjectCounting:
                          "representing the image_path, the text description of the object to be counted")
     def inference(self, inputs):
         image_path, det_prompt = inputs.split(",")
-        log_text=self.func.inference(image_path,det_prompt)
-        return log_text
+        det_prompt = det_prompt.lstrip() 
+        updated_image_path = get_new_image_name(image_path, func_name="counting_" + det_prompt.replace(' ', '_'))
+        log_text,updated_image_path=self.func.inference(image_path, det_prompt,updated_image_path)
+        return log_text,updated_image_path
 
 
-class InstanceSegmentation:
-    def __init__(self, device):
-        print("Initializing InstanceSegmentation")
-        self.func=InstanceFunction(device)
-    @prompts(name="Instance Segmentation for Remote Sensing Image",
-             description="useful when you want to apply man-made instance segmentation for the image. The expected input category include plane, ship, storage tank, baseball diamond, tennis court, basketball court, ground track field, harbor, bridge, vehicle, helicopter, roundabout, soccer ball field, and swimming pool."
-                         "like: extract plane from this image, "
-                         "or predict the ship in this image, or extract tennis court from this image, segment harbor from this image, Extract the vehicle in the image. "
-                         "The input to this tool should be a comma separated string of two, "
-                         "representing the image_path, the text of the category,selected from plane, or ship, or storage tank, or baseball diamond, or tennis court, or basketball court, or ground track field, or harbor, or bridge, or vehicle, or helicopter, or roundabout, or soccer ball field, or  swimming pool. ")
-    def inference(self, inputs):
-        image_path, det_prompt = inputs.split(",")
-        updated_image_path = get_new_image_name(image_path, func_name="instance_" + det_prompt)
-        text=self.func.inference(image_path, det_prompt,updated_image_path)
-        return text
 
 class SceneClassification:
     def __init__(self, device):
@@ -84,10 +76,10 @@ class SceneClassification:
              description="useful when you want to know the type of scene or function for the image. "
                          "like: what is the category of this image?, "
                          "or classify the scene of this image, or predict the scene category of this image, or what is the function of this image. "
-                         "The input to this tool should be a string, representing the image_path. ")
+                         "The input to this tool is just the image path , dont add anything after the image path ")
     def inference(self, inputs):
         output_txt=self.func.inference(inputs)
-        return output_txt
+        return output_txt,None
 
 
 class LandUseSegmentation:
@@ -104,8 +96,8 @@ class LandUseSegmentation:
     def inference(self, inputs):
         image_path, det_prompt = inputs.split(",")
         updated_image_path = get_new_image_name(image_path, func_name="landuse")
-        text=self.func.inference(image_path, det_prompt,updated_image_path)
-        return text
+        text,updated_image_path=self.func.inference(image_path, det_prompt,updated_image_path)
+        return text,updated_image_path
 
 class ObjectDetection:
     def __init__(self, device):
@@ -121,8 +113,8 @@ class ObjectDetection:
     def inference(self, inputs):
         image_path, det_prompt = inputs.split(",")
         updated_image_path = get_new_image_name(image_path, func_name="detection_" + det_prompt.replace(' ', '_'))
-        log_text=self.func.inference(image_path, det_prompt,updated_image_path)
-        return log_text
+        log_text,updated_image_path=self.func.inference(image_path, det_prompt,updated_image_path)
+        return log_text,updated_image_path
 
 class ImageCaptioning:
     def __init__(self, device):
@@ -130,18 +122,56 @@ class ImageCaptioning:
         self.device = device
         self.func=CaptionFunction(device)
     @prompts(name="Get Photo Description",
-             description="useful when you want to know what is inside the photo. receives image_path as input. "
+             description="useful when you want to know what is the caption of the photo. receives image_path as input. "
                          "The input to this tool should be a string, representing the image_path. ")
     def inference(self, image_path):
         captions = self.func.inference(image_path)
         print(f"\nProcessed ImageCaptioning, Input Image: {image_path}, Output Text: {captions}")
-        return captions
+        return captions,image_path
 
-class RSChatGPT:
-    def __init__(self, gpt_name,load_dict,openai_key,proxy_url):
-        print(f"Initializing RSChatGPT, load_dict={load_dict}")
+# Function to convert image to Base64  
+def convert_image_to_base64(image_path):  
+    # Load the image  
+    image = io.imread(image_path)  
+
+    # Convert the image array to a byte array  
+    pil_image = Image.fromarray(image)  
+    buffered = BytesIO()  
+    pil_image.save(buffered, format="JPEG")  # or PNG, depending on your image type  
+
+    # Encode the byte array to Base64  
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')  
+
+class Conversation:
+    def __init__(self, device):
+        print(f"Initializing Conversation to {device}")
+        self.device = device
+        self.ollama = Ollama(base_url='http://172.25.1.139:11434', model="llava:latest")  # Initialize the Ollama Llava model
+
+    @prompts(name="Image Conversation",
+             description="useful when you want to engage in  in a conversation with the image."
+             " You can ask questions related to the content of the image "
+             "like: What are the object categories in the image?"
+             " or Where are the buildings located?, or give me the tags of the objects in the image"
+             "The input to this tool must be a comma separated string of two, "
+             "representing the image_path, the asked question , dont add the image path and the question together without the comma")
+
+    def inference(self,inputs):
+        image_path, question = inputs.split(",")
+        # Convert the image to Base64
+        image_b64 = convert_image_to_base64(image_path)
+
+        # Bind the Base64 image data and invoke the model
+        ollama_with_image = self.ollama.bind(images=[image_b64])  # Wrap in a list for multiple images
+        response = ollama_with_image.invoke(question)
+
+        return response,image_path
+
+class RSChat:
+    def __init__(self,load_dict):
+        print(f"Initializing RSChat, load_dict={load_dict}")
         if 'ImageCaptioning' not in load_dict:
-            raise ValueError("You have to load ImageCaptioning as a basic function for RSChatGPT")
+            raise ValueError("You have to load ImageCaptioning as a basic function for RSChat")
         self.models = {}
         # Load Basic Foundation Models
         for class_name, device in load_dict.items():
@@ -164,32 +194,55 @@ class RSChatGPT:
                 if e.startswith('inference'):
                     func = getattr(instance, e)
                     self.tools.append(Tool(name=func.name, description=func.description, func=func))
+        self.models['Conversation'] = Conversation(device='cpu')  # Instantiate the Conversation class
+        self.tools.append(Tool(name=self.models['Conversation'].inference.name, 
+                                description=self.models['Conversation'].inference.description, 
+                                func=self.models['Conversation'].inference))
 
-        self.llm = ChatOpenAI(api_key=openai_key, base_url=proxy_url, model_name=gpt_name,temperature=0)
-        self.memory = ConversationBufferMemory(memory_key="chat_history", output_key='output')
+        # self.llm = ChatOllama(model="llava:latest", temperature=0, base_url="http://localhost:11434")
+        self.llm = ChatOllama(model="llava:latest", temperature=0,num_ctx=4096, base_url="http://172.25.1.139:11434")
+        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)# return_messages=True
 
     def initialize(self):
         self.memory.clear() #clear previous history
-        PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = RS_CHATGPT_PREFIX, RS_CHATGPT_FORMAT_INSTRUCTIONS, RS_CHATGPT_SUFFIX
+        PREFIX, FORMAT_INSTRUCTIONS, SUFFIX = RS_CHAT_PREFIX, RS_CHAT_FORMAT_INSTRUCTIONS, RS_CHAT_SUFFIX
         self.agent = initialize_agent(
             self.tools,
             self.llm,
             agent="conversational-react-description",
             verbose=True,
             memory=self.memory,
-            return_intermediate_steps=True,stop=["\nObservation:", "\n\tObservation:"],
+            return_intermediate_steps=True,
+            stop=["\nObservation:", "\n\tObservation:"],
             agent_kwargs={'prefix': PREFIX, 'format_instructions': FORMAT_INSTRUCTIONS,'suffix': SUFFIX}, )
+        print("======================================")
+        print("===================Hellllo====================")
+        print("======================================")
+           
 
     def run_text(self, text, state):
+        print("run_text=", text)
         res = self.agent({"input": text.strip()})
+        
+        # Extract Observation and Thought from the response
+        # observation = res.get('intermediate_steps', [])[-1][0].log if res.get('intermediate_steps') else "No Observation"
+        if res.get('intermediate_steps'):
+            # Assuming the last entry contains the observation
+            last_step = res['intermediate_steps'][-1]
+            observation = last_step[1]  # This should give you the desired observation value
+        else:
+            observation = "No Observation"
+
         res['output'] = res['output'].replace("\\", "/")
         response = re.sub('(image/[-\w]*.png)', lambda m: f'![](file={m.group(0)})*{m.group(0)}*', res['output'])
         state = state + [(text, response)]
-        print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
-        return state
+        # print(f"\nProcessed run_text, Input text: {text}\nCurrent state: {state}\n"
+        #       f"Current Memory: {self.agent.memory.buffer}")
+        
+        return state,observation
     def run_image(self, image_dir, state, txt=None):
         image_filename = os.path.join('image', f"{str(uuid.uuid4())[:8]}.png")
+        # print("image_filename=",image_filename)
         img = io.imread(image_dir)
         io.imsave(image_filename, img.astype(np.uint8))
         description = self.models['ImageCaptioning'].inference(image_filename)
@@ -198,34 +251,34 @@ class RSChatGPT:
         self.memory.chat_memory.add_user_message(Human_prompt)
         self.memory.chat_memory.add_ai_message(AI_prompt)
 
-        state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]
-        print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
-              f"Current Memory: {self.agent.memory.buffer}")
-        state=self.run_text(f'{txt} {image_filename} ', state)
-        return state
+        state = state + [(f"![](file={image_filename})*{image_filename}*", AI_prompt)]  
+        # print(f"\nProcessed run_image, Input image: {image_filename}\nCurrent state: {state}\n"
+        #       f"Current Memory: {self.agent.memory.buffer}")
+        state,observation=self.run_text(f'{txt} {image_filename} ', state)
+        print("==================state====================")
+        print(state)
+        print("======================================")
+        return state,observation
 
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--openai_key', type=str,required=True)
-    parser.add_argument('--image_dir', type=str,required=True)
-    parser.add_argument('--gpt_name', type=str, default="gpt-3.5-turbo",choices=['gpt-3.5-turbo-1106','gpt-3.5-turbo','gpt-4','gpt-4-0125-preview','gpt-4-turbo-preview','gpt-4-1106-preview'])
-    parser.add_argument('--proxy_url', type=str, default=None)
-    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,InstanceSegmentation,ObjectCounting,SceneClassification,EdgeDetection]',
-                        default="ImageCaptioning_cuda:0,SceneClassification_cuda:0,ObjectDetection_cuda:0,LandUseSegmentation_cuda:0,InstanceSegmentation_cuda:0,ObjectCounting_cuda:0,EdgeDetection_cpu")
+    parser.add_argument('--image_dir', type=str,required=True,default="./image/airport_2_jpg.rf.9b6c37c3675f890ca191797e3f36c015.jpg")
+    parser.add_argument('--load', type=str,help='Image Captioning is basic models that is required. You can select from [ImageCaptioning,ObjectDetection,LandUseSegmentation,ObjectCounting,SceneClassification,EdgeDetection,Conversation]',
+                        default="ImageCaptioning_cpu,SceneClassification_cpu,ObjectDetection_cpu,LandUseSegmentation_cpu,ObjectCounting_cpu,EdgeDetection_cpu,Conversation_cpu")
     args = parser.parse_args()
     state = []
     load_dict = {e.split('_')[0].strip(): e.split('_')[1].strip() for e in args.load.split(',')}
-    bot = RSChatGPT(gpt_name=args.gpt_name,load_dict=load_dict,openai_key=args.openai_key,proxy_url=args.proxy_url)
+    bot = RSChat(load_dict=load_dict)
     bot.initialize()
-    print('RSChatGPT initialization done, you can now chat with RSChatGPT~')
+    print('RSChat initialization done, you can now chat with RSChat~')
     bot.initialize()
-    txt='Count the number of plane in the image.'
-    state=bot.run_image(args.image_dir, [], txt)
+    txt='give me the tags of the objects in the image'
+    state,observation=bot.run_image(args.image_dir, [], txt)
 
     while 1:
         txt = input('You can now input your question.(e.g. Extract buildings from the image)\n')
-        state = bot.run_image(args.image_dir, state, txt)
+        state,observation = bot.run_image(args.image_dir, state, txt)
 
 

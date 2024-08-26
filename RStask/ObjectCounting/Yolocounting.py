@@ -5,6 +5,8 @@ import numpy as np
 import torchvision
 import torch.nn.functional as F
 from ultralytics import YOLO
+import cv2
+from PIL import Image
 
 class YoloCounting:
     def __init__(self, device):
@@ -14,11 +16,11 @@ class YoloCounting:
         except:
             self.model = YOLO('D:/fifthYear/5th_year_project/Remote-Sensing-ChatGPT-main/checkpoints/yolov8x-obb.pt')
         self.category = ['plane', 'ship', 'storage tank', 'baseball diamond', 'tennis court', 
-                         'basketball court', 'ground track field', 'harbor', 'bridge', 'large vehicle',
+                         'basketball court', 'ground track field','harbor', 'bridge', 'large vehicle',
                            'small vehicle', 'helicopter', 'roundabout', 'soccer ball field' , 'swimming pool']
 
 
-    def inference(self, image_path, det_prompt):
+    def inference(self, image_path, det_prompt,updated_image_path):
         supported_class=False
         for i in range(len(self.category)):
             if self.category[i] == det_prompt or self.category[i] == det_prompt[:-1] or self.category[i] == det_prompt[:-3]:
@@ -59,8 +61,27 @@ class YoloCounting:
         else:
             log_text = 'No ' + self.category[i] + ' detected.'
 
-        # print(f"\nProcessed Object Counting, Input Image: {image_path}, Output text: {log_text}")
-        return log_text
+        print(f"\nProcessed Object Counting, Input Image: {image_path}, Output text: {log_text}")
+        self.visualize(image_path,updated_image_path,detections)
+        return  log_text+' object detection result in : '+updated_image_path ,updated_image_path
+        # return log_text
+    def visualize(self,image_path, newpic_path,detections):
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        im = io.imread(image_path)
+        boxes = detections.int().cpu().numpy()
+        # print("//////////")
+        # print(len(boxes))
+        # print("//////////")
+        for i in range(len(boxes)):
+
+            cv2.rectangle(im, (boxes[i][0], boxes[i][1]), (boxes[i][2], boxes[i][3]), (0, 255, 255), 2)
+            cv2.rectangle(im, (boxes[i][0], boxes[i][1] - 15), (boxes[i][0] + 45, boxes[i][1] - 2), (0, 0, 255),thickness=-1)
+            cv2.putText(im, self.category[boxes[i][-1]], (boxes[i][0], boxes[i][1] - 2), font, 0.5, (255, 255, 255),1)
+            
+        Image.fromarray(im.astype(np.uint8)).save(newpic_path)
+        with open(newpic_path[:-4]+'.txt','w') as f:
+            for i in range(len(boxes)):
+                f.write(str(list(boxes[i,:4]))[1:-1]+', '+self.category[boxes[i][-1]]+'\n')
 
     def non_max_suppression(self, prediction,
                             conf_thres=0.25,

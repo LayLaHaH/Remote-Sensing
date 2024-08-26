@@ -4,4 +4,3 @@ from RStask.LanduseSegmentation.samGeo import SAMLandUseSegmentation as LanduseF
 from RStask.ObjectCounting.Yolocounting import YoloCounting as CountingFuncnction
 from RStask.ObjectDetection.YOLOv8x_obb import YoloDetection as DetectionFunction
 from RStask.SceneClassification.ResNetScene import ResNetAID as SceneFunction
-from RStask.InstanceSegmentation.SwinUpper import SwinInstance as InstanceFunction

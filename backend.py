@@ -1,30 +1,18 @@
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-
-# app = FastAPI()
-
-# # Define a model for the request body
-# class Item(BaseModel):
-#     name: str
-#     price: float
-#     is_available: bool
-
-# @app.post("/")
-# async def create_item(item: Item):
-#     return {"name": item.name, "price": item.price, "is_available": item.is_available}
-
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from RSChatGPT_shell import RSChatGPT  # Make sure to import your RSChatGPT class
+from RSChat_shell import RSChat 
 import os
-
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Form, UploadFile, File
+import ast
 app = FastAPI()
 
 class QueryRequest(BaseModel):
     image_path: str
     question: str
 
-# Initialize RSChatGPT here
+# Initialize RSChat here
 load_dict = {
     "ImageCaptioning": "cpu",
     "SceneClassification": "cpu",
@@ -35,59 +23,54 @@ load_dict = {
     "Conversation": "cpu"
 }
 
-bot = RSChatGPT(gpt_name="gpt-3.5-turbo", load_dict=load_dict, openai_key=None, proxy_url=None)
+bot = RSChat(load_dict=load_dict)
 bot.initialize()
 
 @app.get("/")
 async def read_root():
     return {"Hello": "World"}
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Allow frontend's origin
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allow all headers
+)
+# Serve static files from the "image" directory
+app.mount("/images", StaticFiles(directory="C:/Users/Layla/Desktop/Remote-Sensing-ChatGPT-main/image"), name="images")
+
 @app.post("/ask/")
-async def ask_gpt(query: QueryRequest):
+async def ask(image_path: str = Form(...),question: str = Form(...)):
     try:
         # Ensure the image path is valid
-        if not os.path.exists(query.image_path):
+        if not os.path.exists(image_path):
             raise HTTPException(status_code=400, detail="Image path does not exist.")
 
-        # Run the image query through RSChatGPT
+        # Extract the image name from the path
+        image_name = os.path.basename(image_path)
+
+        # Combine the new base path with the image name
+        new_image_path = os.path.join('./image', image_name)
+
+        # Run the image query through RSChat
         state = []
-        state = bot.run_image(query.image_path, state, query.question)
-        
+        state, observation = bot.run_image(new_image_path, state, question)
+
+        if isinstance(observation, tuple):
+            description, img_path = observation  # Directly unpack the tuple
+            img_name = os.path.basename(img_path)
+        else:
+            raise ValueError("Observation is not in the expected tuple format.")
         # Extract the response and observation from the state
         response = state[-1] if state else "No response generated."
-        return {"response": response}
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/items/{item_id}")
-async def read_item(item_id: int, q: str = None):
-    return {"item_id": item_id, "q": q}
-
-
-
-
-@app.post("/ask-fixed/")
-async def ask_fixed():
-    # Define fixed values
-    fixed_image_path = "./image/airport_1_jpg.rf.3c38a93e805e111768dd2e37658c7c75.jpg" 
-    fixed_question = "how many plane are in the image"
-
-    # Ensure the image path is valid
-    if not os.path.exists(fixed_image_path):
-        raise HTTPException(status_code=400, detail="Image path does not exist.")
-
-    try:
-        # Run the image query through RSChatGPT
-        state = []
-        state,image_path = bot.run_image(fixed_image_path, state, fixed_question)
         
-        # Extract the response and observation from the state
-        response = state[-1] if state else "No response generated."
-
         return {
-            "response": response,
-            "result_image_path": image_path
+            "response": description,
+            "result_image_path": f"images/{img_name}",
         }
-    
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+

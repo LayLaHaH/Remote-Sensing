@@ -45,9 +45,9 @@ class YoloDetection:
                 det[y1:y2, x1:x2] = detection_classes[i] + 1
 
             self.visualize(image_path,updated_image_path,detections)
-            # print(
-            #     f"\nProcessed Object Detection, Input Image: {image_path}, Output Bounding box: {updated_image_path},Output text: {'Object Detection Done'}")
-            return  det_prompt+' object detection result in '+updated_image_path
+            print(
+                f"\nProcessed Object Detection, Input Image: {image_path}, Output Bounding box: {updated_image_path},Output text: {'Object Detection Done'}")
+            return  det_prompt+' object detection result in '+updated_image_path,updated_image_path
     def visualize(self,image_path, newpic_path,detections):
         font = cv2.FONT_HERSHEY_SIMPLEX
         im = io.imread(image_path)
