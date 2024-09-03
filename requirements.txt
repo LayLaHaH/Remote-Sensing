@@ -6,3 +6,4 @@ numpy
 openai
 opencv-python
 scikit-image
+langsam
