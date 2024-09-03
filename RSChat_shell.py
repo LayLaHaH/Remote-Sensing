@@ -37,6 +37,20 @@ def get_new_image_name(org_img_name, func_name="update"):
     new_file_name = f'{this_new_uuid}_{func_name}_{recent_prev_file_name}.png'.replace('__','_')
     return os.path.join(head, new_file_name)
 
+# Function to convert image to Base64  
+def convert_image_to_base64(image_path):  
+    # Load the image  
+    image = io.imread(image_path)  
+
+    # Convert the image array to a byte array  
+    pil_image = Image.fromarray(image)  
+    buffered = BytesIO()  
+    pil_image.save(buffered, format="JPEG")  # or PNG, depending on your image type  
+
+    # Encode the byte array to Base64  
+    return base64.b64encode(buffered.getvalue()).decode('utf-8')  
+
+
 class EdgeDetection:
     def __init__(self, device):
         print("Initializing Edge Detection Function....")
@@ -66,21 +80,22 @@ class ObjectCounting:
         log_text,updated_image_path=self.func.inference(image_path, det_prompt,updated_image_path)
         return log_text,updated_image_path
 
-
-
 class SceneClassification:
     def __init__(self, device):
         print("Initializing SceneClassification")
         self.func=SceneFunction(device)
-    @prompts(name="Scene Classification for Remote Sensing Image",
-             description="useful when you want to know the type of scene or function for the image. "
-                         "like: what is the category of this image?, "
-                         "or classify the scene of this image, or predict the scene category of this image, or what is the function of this image. "
-                         "The input to this tool is just the image path , dont add anything after the image path ")
+    @prompts(name="Scene Classification",
+             description="To classify the scene in a remote sensing image "
+                         "like: what is the category of this image?,"
+                         "or Classify the scene in this remote sensing photo for me. "
+                         " follow these steps: "
+                        "1. Analyze the content of the image. "
+                        "2. Determine the category based on visual features. "
+                        "3. Output the identified scene category. "
+                        "Input:   . Output: scene category.")
     def inference(self, inputs):
         output_txt=self.func.inference(inputs)
         return output_txt,None
-
 
 class LandUseSegmentation:
     def __init__(self, device):
@@ -128,19 +143,6 @@ class ImageCaptioning:
         captions = self.func.inference(image_path)
         print(f"\nProcessed ImageCaptioning, Input Image: {image_path}, Output Text: {captions}")
         return captions,image_path
-
-# Function to convert image to Base64  
-def convert_image_to_base64(image_path):  
-    # Load the image  
-    image = io.imread(image_path)  
-
-    # Convert the image array to a byte array  
-    pil_image = Image.fromarray(image)  
-    buffered = BytesIO()  
-    pil_image.save(buffered, format="JPEG")  # or PNG, depending on your image type  
-
-    # Encode the byte array to Base64  
-    return base64.b64encode(buffered.getvalue()).decode('utf-8')  
 
 class Conversation:
     def __init__(self, device):
@@ -211,6 +213,7 @@ class RSChat:
             self.llm,
             agent="conversational-react-description",
             verbose=True,
+            max_iterations=2,
             memory=self.memory,
             return_intermediate_steps=True,
             stop=["\nObservation:", "\n\tObservation:"],
@@ -274,7 +277,7 @@ if __name__ == '__main__':
     bot.initialize()
     print('RSChat initialization done, you can now chat with RSChat~')
     bot.initialize()
-    txt='give me the tags of the objects in the image'
+    txt='Classify the scene in this image'
     state,observation=bot.run_image(args.image_dir, [], txt)
 
     while 1:
