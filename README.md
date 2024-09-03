@@ -4,19 +4,22 @@
 
 ### Requirements
 
-Please Refer to [requirements.txt](https://github.com/HaonanGuo/Remote-Sensing-ChatGPT/blob/main/requirements.txt)
+Please Refer to [requirements.txt](https://github.com/LayLaHaH/Remote-Sensing/blob/main/requirements.txt)
 
 ### Usage
 
-->Run [RSChatG_shell.py](https://github.com/HaonanGuo/Remote-Sensing-ChatGPT/blob/main/RSChatGPT-shell.py)
+->Run [RSChatG_shell.py](https://github.com/LayLaHaH/Remote-Sensing/blob/main/RSChat_shell.py)
 
 More funtions to be updated~
 
 ## Acknowledgments
 
-- [Visual ChatGPT](https://github.com/microsoft/TaskMatrix)
-- [YOLOv5](https://github.com/hukaixuan19970627/yolov5_obb)
-- [BLIP](https://github.com/salesforce/BLIP)
+- [YOLOv8x-obb](https://docs.ultralytics.com/tasks/obb/)
+- [geoSAM](https://samgeo.gishub.org/installation/)
+- [resnet](https://drive.google.com/file/d/1f-WES6fTGGa5W9BcDPMVhGk3Foc4p9Or/view?usp=drive_link)
+- [BLIP](https://huggingface.co/Salesforce/blip-image-captioning-base#running-the-model-on-cpu)
+
+and the rest models from
 
 ## Help
 
