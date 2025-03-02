@@ -19,8 +19,3 @@ More funtions to be updated~
 - [resnet](https://drive.google.com/file/d/1f-WES6fTGGa5W9BcDPMVhGk3Foc4p9Or/view?usp=drive_link)
 - [BLIP](https://huggingface.co/Salesforce/blip-image-captioning-base#running-the-model-on-cpu)
 
-and the rest models from
-
-## Help
-
-Remote Sensing ChatGPT is an open source project that welcome any contribution and feedback. Please contact us with: haonan.guo@whu.edu.cn
